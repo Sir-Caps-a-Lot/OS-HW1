@@ -2,48 +2,39 @@
 #define SMASH_COMMAND_H_
 
 #include <vector>
-#include <string.h>
-#include <fstream>
-
+#include <stdio.h>
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
 
+using namespace std;
+
 class Command {
 // TODO: Add your data members
+protected:
+    const char* cmd_line;
  public:
- 
-  std::vector<std::string> words;
-  Command(const char* cmd_line);
+  explicit Command(const char* cmd_line);
   virtual ~Command() {}
-  virtual void execute(std::ostream& out) = 0;
+  virtual void execute() = 0;
   //virtual void prepare();
   //virtual void cleanup();
   // TODO: Add your extra methods if needed
+
 };
 
 class BuiltInCommand : public Command {
  public:
-  BuiltInCommand(const char* cmd_line) : Command(cmd_line) {}
-  virtual ~BuiltInCommand() {}
+  BuiltInCommand(const char* cmd_line);
+  virtual ~BuiltInCommand() {
+        delete this->cmd_line;
+  }
 };
 
 class ExternalCommand : public Command {
  public:
-  ExternalCommand(const char* cmd_line) : Command(cmd_line) {}
+  ExternalCommand(const char* cmd_line);
   virtual ~ExternalCommand() {}
-  void execute(std::ostream& out) override;
-};
-
-class RedirectionCommand : public Command {
- public:
- bool valid;
- const char* dest_file;
- const char* wtype;
- std::ostream* outputStream = nullptr;
-  RedirectionCommand(const char* cmd_line);
-  ~RedirectionCommand();
-  void execute(std::ostream& out) override {};
-  std::ostream* prepare(); 
+  void execute() override;
 };
 
 class PipeCommand : public Command {
@@ -51,40 +42,57 @@ class PipeCommand : public Command {
  public:
   PipeCommand(const char* cmd_line);
   virtual ~PipeCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
+};
+
+class RedirectionCommand : public Command {
+ // TODO: Add your data members
+ public:
+  explicit RedirectionCommand(const char* cmd_line);
+  virtual ~RedirectionCommand() {}
+  void execute() override;
+  //void prepare() override;
+  //void cleanup() override;
 };
 
 class ChangeDirCommand : public BuiltInCommand {
-  public: 
-    char ** last;
-    std::string dest;
 // TODO: Add your data members public:
-    ChangeDirCommand(const char* cmd_line, char** plastPwd);
-    virtual ~ChangeDirCommand() {}
-    void execute(std::ostream& out) override;
+public:
+  char** plastPwd;
+  ChangeDirCommand(const char* cmd_line, char** plastPwd);
+  virtual ~ChangeDirCommand() {}
+  void execute() override;
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
  public:
-  GetCurrDirCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+  GetCurrDirCommand(const char* cmd_line);
   virtual ~GetCurrDirCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
+};
+
+class ChpromptCommand : public BuiltInCommand {
+public:
+    explicit ChpromptCommand(const char *cmd_line);
+    virtual  ~ChpromptCommand() = default;
+    void execute() override;
 };
 
 class ShowPidCommand : public BuiltInCommand {
  public:
-  ShowPidCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+  ShowPidCommand(const char* cmd_line);
   virtual ~ShowPidCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
+
+
 
 class JobsList;
 class QuitCommand : public BuiltInCommand {
-  public:
 // TODO: Add your data members public:
-    QuitCommand(const char* cmd_line, JobsList* jobs) : BuiltInCommand(cmd_line) {}
-    virtual ~QuitCommand() {}
-    void execute(std::ostream& out) override;
+  QuitCommand(const char* cmd_line, JobsList* jobs);
+  virtual ~QuitCommand() {}
+  void execute() override;
 };
 
 
@@ -94,6 +102,13 @@ class JobsList {
  public:
   class JobEntry {
    // TODO: Add your data members
+    public:
+     int job_id;
+     pid_t pid;
+     time_t start_time;
+     bool is_stopped;
+     string cmd;
+     JobEntry(int job_id, pid_t pid, time_t start_time, bool is_stopped, string cmd);
   };
  // TODO: Add your data members
  public:
@@ -115,7 +130,7 @@ class JobsCommand : public BuiltInCommand {
  public:
   JobsCommand(const char* cmd_line, JobsList* jobs);
   virtual ~JobsCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class KillCommand : public BuiltInCommand {
@@ -123,7 +138,7 @@ class KillCommand : public BuiltInCommand {
  public:
   KillCommand(const char* cmd_line, JobsList* jobs);
   virtual ~KillCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class ForegroundCommand : public BuiltInCommand {
@@ -131,27 +146,31 @@ class ForegroundCommand : public BuiltInCommand {
  public:
   ForegroundCommand(const char* cmd_line, JobsList* jobs);
   virtual ~ForegroundCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class ChmodCommand : public BuiltInCommand {
  public:
-  int perm;
-  bool valid;
-  const char* dest_file;
   ChmodCommand(const char* cmd_line);
   virtual ~ChmodCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 
 class SmallShell {
  private:
   // TODO: Add your data members
+
   SmallShell();
+
  public:
-  char* last_pwd;
-  Command *CreateCommand(const char* cmd_line);
+    static std::string prompt_name;
+    static pid_t pid;
+    char* last_pwd;
+    JobsList* jobs;
+
+
+  Command* CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
   void operator=(SmallShell const&)  = delete; // disable = operator
   static SmallShell& getInstance() // make SmallShell singleton
@@ -163,6 +182,16 @@ class SmallShell {
   ~SmallShell();
   void executeCommand(const char* cmd_line);
   // TODO: add extra methods as needed
+
+    std::string getPromptName(){
+        return prompt_name;
+    }
+    void setPromptName(std::string name){
+        prompt_name = name;
+    }
+    char* getLastPwd(){
+        return last_pwd;
+    }
 };
 
 #endif //SMASH_COMMAND_H_
