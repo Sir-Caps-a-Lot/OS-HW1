@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <stdio.h>
+#include <fstream>
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
 
@@ -13,12 +14,20 @@ class Command {
 protected:
     const char* cmd_line;
  public:
-  explicit Command(const char* cmd_line);
+//
+//  bool background;
+//  bool redirect;
+//  char** args;
+//  int fd;
+//  int std_fd;
+//  vector<string> words;
+  Command(const char* cmd_line);
   virtual ~Command() {}
   virtual void execute() = 0;
   //virtual void prepare();
   //virtual void cleanup();
   // TODO: Add your extra methods if needed
+  const char* get_cmd_line() const;
 
 };
 
@@ -32,9 +41,12 @@ class BuiltInCommand : public Command {
 
 class ExternalCommand : public Command {
  public:
-  ExternalCommand(const char* cmd_line);
-  virtual ~ExternalCommand() {}
-  void execute() override;
+    char** argv;
+    std::string command;
+    bool complex;
+    ExternalCommand(const char* cmd_line);
+    virtual ~ExternalCommand() {}
+    void execute() override;
 };
 
 class PipeCommand : public Command {
@@ -104,16 +116,19 @@ class JobsList {
    // TODO: Add your data members
     public:
      int job_id;
-     pid_t pid;
+     pid_t job_pid;
      time_t start_time;
      bool is_stopped;
-     string cmd;
-     JobEntry(int job_id, pid_t pid, time_t start_time, bool is_stopped, string cmd);
+     const char* cmd_line;
+     JobEntry(int job_id, pid_t job_pid, time_t start_time, bool is_stopped, const char* cmd_line);
   };
  // TODO: Add your data members
- public:
+
+  std::vector<JobEntry> jobs_list;
+  int max_job_id;
+
   JobsList();
-  ~JobsList();
+  ~JobsList() = default;
   void addJob(Command* cmd, bool isStopped = false);
   void printJobsList();
   void killAllJobs();
@@ -167,7 +182,9 @@ class SmallShell {
     static std::string prompt_name;
     static pid_t pid;
     char* last_pwd;
-    JobsList* jobs;
+    static JobsList jobs;
+    const char* curr_cmd;
+    pid_t fg_pid;
 
 
   Command* CreateCommand(const char* cmd_line);
