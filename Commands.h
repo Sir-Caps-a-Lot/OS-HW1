@@ -18,6 +18,8 @@ class Command {
   int fd;
   int std_fd;
   std::vector<std::string> words;
+  std::string full_cmd;
+
   Command(const char* cmd_line);
   virtual ~Command();
   virtual void execute() = 0;
@@ -74,11 +76,20 @@ class ShowPidCommand : public BuiltInCommand {
   void execute() override;
 };
 
+class ChpromptCommand : public BuiltInCommand {
+  public:
+  ChpromptCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+  virtual ~ChpromptCommand() {}
+  void execute() override;
+};
+
 class JobsList;
 class QuitCommand : public BuiltInCommand {
   public:
+    bool kill;
+
 // TODO: Add your data members public:
-    QuitCommand(const char* cmd_line, JobsList* jobs) : BuiltInCommand(cmd_line) {}
+    QuitCommand(const char* cmd_line);
     virtual ~QuitCommand() {}
     void execute() override;
 };
@@ -90,26 +101,33 @@ class JobsList {
  public:
   class JobEntry {
    // TODO: Add your data members
+    public:
+     int job_id;
+     int job_pid;
+     std::string cmd_line;
+     JobEntry(int job_id, int job_pid, const char* cmd_line) : job_id(job_id), job_pid(job_pid), cmd_line(cmd_line) {}
   };
  // TODO: Add your data members
- public:
-  JobsList();
-  ~JobsList();
-  void addJob(Command* cmd, bool isStopped = false);
+
+  std::vector<JobEntry> jobs_list;
+  int max_job_id;
+
+  JobsList() : jobs_list(), max_job_id(1) {}
+  ~JobsList() = default;
+  void addJob(const char* cmd, int pid);
   void printJobsList();
   void killAllJobs();
   void removeFinishedJobs();
   JobEntry * getJobById(int jobId);
   void removeJobById(int jobId);
   JobEntry * getLastJob(int* lastJobId);
-  JobEntry *getLastStoppedJob(int *jobId);
   // TODO: Add extra methods or modify exisitng ones as needed
 };
 
 class JobsCommand : public BuiltInCommand {
  // TODO: Add your data members
  public:
-  JobsCommand(const char* cmd_line, JobsList* jobs);
+  JobsCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
   virtual ~JobsCommand() {}
   void execute() override;
 };
@@ -117,7 +135,7 @@ class JobsCommand : public BuiltInCommand {
 class KillCommand : public BuiltInCommand {
  // TODO: Add your data members
  public:
-  KillCommand(const char* cmd_line, JobsList* jobs);
+  KillCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
   virtual ~KillCommand() {}
   void execute() override;
 };
@@ -125,7 +143,7 @@ class KillCommand : public BuiltInCommand {
 class ForegroundCommand : public BuiltInCommand {
  // TODO: Add your data members
  public:
-  ForegroundCommand(const char* cmd_line, JobsList* jobs);
+  ForegroundCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {};
   virtual ~ForegroundCommand() {}
   void execute() override;
 };
@@ -147,6 +165,9 @@ class SmallShell {
   SmallShell();
  public:
   char* last_pwd;
+  static std::string prompt;
+  static JobsList jobs;
+
   Command *CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
   void operator=(SmallShell const&)  = delete; // disable = operator
