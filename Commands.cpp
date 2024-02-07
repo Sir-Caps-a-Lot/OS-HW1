@@ -80,7 +80,7 @@ void _removeBackgroundSign(char* cmd_line) {
 }
 
 // Command
-Command::Command(const char* cmd_line) : full_cmd(cmd_line) {
+Command::Command(const char* cmd_line) : full_cmd(cmd_line), redirect_failed(false), cmd_argc(0) {
   this->std_fd = dup(1);
   stringstream ss(this->full_cmd);
   string buffer;
@@ -89,51 +89,66 @@ Command::Command(const char* cmd_line) : full_cmd(cmd_line) {
   }
 
   // Find if need to redirect output
-  this->redirect = this->words.size() > 2;
-  const char* dest_file;
+  bool find_file = false;
   int wtype;
-  if (this->redirect) {
-    dest_file = this->words[this->words.size()-1].c_str();
-    if (this->words[this->words.size()-2].compare(">") == 0) {
-      wtype = O_WRONLY|O_CREAT|O_TRUNC;
-    }
-    else if (this->words[this->words.size()-2].compare(">>") == 0) {
-      wtype = O_WRONLY|O_APPEND|O_CREAT;
-    }
-    else {
-      this->redirect = false;
-    }
-  }
-
-  // Redirect stdout
-  if (this->redirect) {
-    int perm = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-    this->fd = open(dest_file, wtype, perm);
-    if (this->fd == -1) {
-      perror("smash error: open: failed");
-      this->redirect = false;
-    }
-    else {
-      close(1);
-      if (dup2(this->fd, 1)==-1) {
-        perror("smash error: dup2: failed");
-        close(this->fd);
-        dup2(this->std_fd, 1);
-        this->redirect = false;
+  for (auto word : this->words) {
+    this->cmd_argc++;
+    int cmd_pos = 0;
+    bool overwrite = false;
+    if (!find_file) {// still need to find out if redirect is needed
+      int redirect_pos = word.find(">");
+      if (redirect_pos == std::string::npos)
+        continue;
+      bool overwrite = (word.find(">>") == std::string::npos) ? true : false;
+      wtype = O_WRONLY|O_CREAT;
+      wtype |= (overwrite) ? O_TRUNC : O_APPEND;
+      find_file = true;
+      cmd_pos = redirect_pos + !overwrite + 1;
+      if (word.size() == cmd_pos) {
+        continue;
       }
+    }
+    if (find_file) {// can still be reach after the first block
+      int perm = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+      const char* dest_file = word.substr(cmd_pos).c_str();
+      this->fd = open(dest_file, wtype, perm);
+      if (this->fd == -1) {
+        perror("smash error: open: failed");
+        this->redirect = false;
+        this->redirect_failed = true;
+      }
+      else {
+        close(1);
+        if (dup2(this->fd, 1)==-1) {
+          perror("smash error: dup2: failed");
+          close(this->fd);
+          dup2(this->std_fd, 1);
+          this->redirect = false;
+          this->redirect_failed = true;
+        }
+        else {
+          this->redirect = true;
+        }
+      }
+      break;
     }
   }
   
   // Background check
-  std::string last = this->words[this->words.size() - 1];
-  this->background = *(last.end()-1) == '&';
-  if (this->background) {
-    if (last.compare("&")==0) {
-      this->words.pop_back();
+  if (this->words.size() !=0) {
+    std::string last = this->words[this->words.size() - 1];
+    this->background = *(last.end()-1) == '&';
+    if (this->background) {
+      if (last.compare("&")==0) {
+        this->words.pop_back();
+      }
+      else {
+        this->words[this->words.size() - 1] = last.substr(0, last.size()-1); // remove it from command
+      }
     }
-    else {
-      this->words[this->words.size() - 1] = last.substr(0, last.size()-1); // remove it from command
-    }
+  }
+  else {
+    this->background = false;
   }
 }
 
@@ -151,6 +166,9 @@ ChangeDirCommand::ChangeDirCommand(const char* cmd_line, char** plastPwd) : Buil
 }
 
 void ChangeDirCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   char* current = getcwd(NULL, 0);
   if (this->words.size() > 2)
     std::cerr << "smash error: cd: too many arguments\n";
@@ -191,6 +209,9 @@ ChmodCommand::ChmodCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {
 }
 
 void ChmodCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   if (!this->valid) {
     std::cerr << "smash error: chmod: invalid arguments\n";
   }
@@ -208,12 +229,18 @@ QuitCommand::QuitCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {
 }
 
 void QuitCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   SmallShell::jobs.killAllJobs();
   exit(0);
 }
 
 // GetPID
 void ShowPidCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   int p=getpid();
   if (p==-1) {
     perror("smash error: getpid: failed");
@@ -225,6 +252,9 @@ void ShowPidCommand::execute() {
 
 // PWD
 void GetCurrDirCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   const char* cwd = getcwd(NULL, 0);
   if (cwd == NULL) {
     perror("smash error: getcwd: failed");
@@ -238,29 +268,25 @@ void GetCurrDirCommand::execute() {
 // External
 ExternalCommand::ExternalCommand(const char* cmd_line) : Command(cmd_line){
   // Get full command (no redirection)
-  std::string full_cmd = string(cmd_line);
+  std::string cmd = string(cmd_line);
   if (this->redirect) 
-    full_cmd = full_cmd.substr(0, full_cmd.find(" >"));
+    cmd = cmd.substr(0, cmd.find(">"));
 
   // Find if need /bin/bash
   this->complex = false;
-  this->complex |= full_cmd.find('?') != std::string::npos;
-  this->complex |= full_cmd.find('*') != std::string::npos;
-  if (this->complex) {
-    this->command = string("/bin/bash");
-  }
-  else {
-    this->command = this->words[0];
-  }
+  this->complex |= cmd.find('?') != std::string::npos;
+  this->complex |= cmd.find('*') != std::string::npos;
 
   // Find the argvs
-  int argc = !this->complex ? this->words.size() - 2 * this->redirect : 3;
   if (!this->complex) { // normal external
-    int argc = this->words.size() - 2 * this->redirect;
-    this->argv = new char*[argc+1];
-    for (int i=0; i < argc; i++) {
-      this->argv[i] = new char[this->words[i].size()+1];
-      strcpy(this->argv[i], this->words[i].c_str());
+    this->argv = new char*[this->cmd_argc+1];
+    for (int i=0; i < this->cmd_argc; i++) {
+      std::string word = this->words[i];
+      int red = this->words[i].find(">");
+      if (red!=std::string::npos)
+        word = word.substr(0, red);
+      this->argv[i] = new char[word.size()+1];
+      strcpy(this->argv[i], word.c_str());
     }
   }
   else {
@@ -269,13 +295,28 @@ ExternalCommand::ExternalCommand(const char* cmd_line) : Command(cmd_line){
     strcpy(this->argv[0], "/bin/bash");
     this->argv[1] = new char[3]; // "-c" + null terminator
     strcpy(this->argv[1], "-c");
-    this->argv[2] = new char[full_cmd.size()+1];
-    strcpy(this->argv[2], full_cmd.c_str());
+    this->argv[2] = new char[cmd.size()+1];
+    strcpy(this->argv[2], cmd.c_str());
   }
-  this->argv[argc] = nullptr;
+  if (this->complex) {
+    this->command = string("/bin/bash");
+  }
+  else if(this->words.size()!=0){
+    this->command = this->argv[0];
+  }
+  else {
+    this->command = "";
+  }
+  this->argv[this->cmd_argc] = nullptr;
 }
 
 void ExternalCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
+  if (this->words.size()==0) { // no command to do
+    return;
+  }
   int p=fork();
   if (p == -1) { // failed
     perror("smash error: fork: failed");
@@ -297,16 +338,19 @@ void ExternalCommand::execute() {
 }
 
 ExternalCommand::~ExternalCommand() {
-  int argc = (!this->complex) ? (this->words.size() - 2 * this->redirect) : 3;
-  for (int i=0; i<argc; i++) {
+  for (int i=0; i<this->cmd_argc; i++) {
     delete[] this->argv[i];
   }
-  delete[] this->argv;
+  if (this->cmd_argc > 0)
+    delete[] this->argv;
 }
 
 // Chprompt
 std::string SmallShell::prompt;
 void ChpromptCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   if (this->words.size() == 1) {
     SmallShell::prompt = "smash";
   }
@@ -394,11 +438,17 @@ JobsList::JobEntry* JobsList::getLastJob(int* lastJobId) { // used for fg comman
 
 // jobs
 void JobsCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   SmallShell::jobs.printJobsList();
 }
 
 // forground
 void ForegroundCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   if (this->words.size() == 1) { // Wait for last
     int jid;
     auto job = SmallShell::jobs.getLastJob(&jid);
@@ -437,6 +487,9 @@ void ForegroundCommand::execute() {
 
 // Kill
 void KillCommand::execute() {
+  if (this->redirect_failed) {
+    return;
+  }
   if (this->words.size() != 3) {
     std::cerr << "smash error: kill: invalid arguments\n";
   }
@@ -483,7 +536,7 @@ SmallShell::~SmallShell() {
 */
 Command * SmallShell::CreateCommand(const char* cmd_line) {
   string cmd_s = _trim(string(cmd_line));
-  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(WHITESPACE));
 
   if (firstWord.compare("chprompt") == 0 || firstWord.compare("chprompt&") == 0) {
     return new ChpromptCommand(cmd_line);
