@@ -94,9 +94,6 @@ class QuitCommand : public BuiltInCommand {
     void execute() override;
 };
 
-
-
-
 class JobsList {
  public:
   class JobEntry {
@@ -105,7 +102,11 @@ class JobsList {
      int job_id;
      int job_pid;
      std::string cmd_line;
-     JobEntry(int job_id, int job_pid, const char* cmd_line) : job_id(job_id), job_pid(job_pid), cmd_line(cmd_line) {}
+     time_t start_time;
+     JobEntry(int job_id, int job_pid, const char* cmd_line, time_t start_time) : job_id(job_id), job_pid(job_pid),
+              cmd_line(cmd_line), start_time(start_time) {}
+
+     void updateTime();
   };
  // TODO: Add your data members
 
@@ -121,8 +122,31 @@ class JobsList {
   JobEntry * getJobById(int jobId);
   void removeJobById(int jobId);
   JobEntry * getLastJob(int* lastJobId);
-  // TODO: Add extra methods or modify exisitng ones as needed
+  JobEntry* getJobByCmd(const char* cmd);
+    // TODO: Add extra methods or modify exisitng ones as needed
 };
+
+class AlarmList {
+public:
+    class AlarmEntry {
+    public:
+        time_t start_time;
+        time_t duration;
+        std::string cmd_line;
+        int pid;
+
+        AlarmEntry(time_t start_time, time_t duration, const char* cmd_line, pid_t pid) : start_time(start_time),
+        duration(duration), cmd_line(cmd_line), pid(pid) {}
+    };
+
+    std::vector<AlarmEntry> alarms;
+
+    AlarmList() : alarms() {}
+    ~AlarmList() = default;
+    void addAlarm(const char* cmd, int pid, time_t duration);
+    void removeFinishedAlarms();
+};
+
 
 class JobsCommand : public BuiltInCommand {
  // TODO: Add your data members
@@ -158,6 +182,13 @@ class ChmodCommand : public BuiltInCommand {
   void execute() override;
 };
 
+class TimeoutCommand : public BuiltInCommand {
+ public:
+  TimeoutCommand(const char* cmd_line);
+  virtual ~TimeoutCommand() {}
+  void execute() override;
+};
+
 
 class SmallShell {
  private:
@@ -167,6 +198,8 @@ class SmallShell {
   char* last_pwd;
   static std::string prompt;
   static JobsList jobs;
+  static AlarmList alarms;
+  time_t duration;
 
   Command *CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
