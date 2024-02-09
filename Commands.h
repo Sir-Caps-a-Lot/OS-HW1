@@ -14,6 +14,8 @@ class Command {
  
   bool background;
   bool redirect;
+  bool redirect_failed;
+  int cmd_argc;
   char** argv;
   int fd;
   int std_fd;
@@ -94,8 +96,26 @@ class QuitCommand : public BuiltInCommand {
     void execute() override;
 };
 
+class AlarmList {
+public:
+  class AlarmEntry {
+  public:
+      time_t start_time;
+      time_t duration;
+      std::string cmd_line;
+      int pid;
 
+      AlarmEntry(time_t start_time, time_t duration, const char* cmd_line, pid_t pid) : start_time(start_time),
+      duration(duration), cmd_line(cmd_line), pid(pid) {}
+  };
 
+  std::vector<AlarmEntry> alarms;
+
+  AlarmList() : alarms() {}
+  ~AlarmList() = default;
+  void addAlarm(const char* cmd, int pid, time_t duration);
+  void removeFinishedAlarms();
+};
 
 class JobsList {
  public:
@@ -158,6 +178,12 @@ class ChmodCommand : public BuiltInCommand {
   void execute() override;
 };
 
+class TimeoutCommand : public BuiltInCommand {
+ public:
+  TimeoutCommand(const char* cmd_line);
+  virtual ~TimeoutCommand() {}
+  void execute() override;
+};
 
 class SmallShell {
  private:
@@ -167,6 +193,8 @@ class SmallShell {
   char* last_pwd;
   static std::string prompt;
   static JobsList jobs;
+  static AlarmList alarms;
+  static int fg_pid;
 
   Command *CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
