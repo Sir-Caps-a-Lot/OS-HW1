@@ -11,7 +11,7 @@
 class Command {
 // TODO: Add your data members
  public:
- 
+  bool timed;
   bool background;
   bool redirect;
   bool redirect_failed;
@@ -115,6 +115,7 @@ public:
   ~AlarmList() = default;
   void addAlarm(const char* cmd, int pid, time_t duration);
   void removeFinishedAlarms();
+  AlarmEntry* getFinishedAlarm();
 };
 
 class JobsList {

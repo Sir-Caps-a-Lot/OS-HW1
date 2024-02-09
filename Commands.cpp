@@ -82,6 +82,7 @@ void _removeBackgroundSign(char* cmd_line) {
 //********************************** Command ************************************
 Command::Command(const char* cmd_line) : redirect_failed(false), cmd_argc(0), full_cmd(cmd_line) {
   this->std_fd = dup(1);
+  this->timed = false;
   stringstream ss(this->full_cmd);
   string buffer;
   while (ss >> buffer) {
@@ -230,7 +231,9 @@ void QuitCommand::execute() {
   if (this->redirect_failed) {
     return;
   }
-  SmallShell::jobs.killAllJobs();
+  if (this->kill) {
+    SmallShell::jobs.killAllJobs();
+  }
   exit(0);
 }
 
@@ -265,6 +268,7 @@ void GetCurrDirCommand::execute() {
 
 //**********************************ExternalCommand**********************************
 int SmallShell::fg_pid;
+AlarmList SmallShell::alarms;
 ExternalCommand::ExternalCommand(const char* cmd_line) : Command(cmd_line){
   // Get full command (no redirection)
   std::string cmd = string(cmd_line);
@@ -326,6 +330,11 @@ void ExternalCommand::execute() {
     exit(1);
   }
   else { // parent
+    if (this->timed) {
+      auto last_alrm = SmallShell::alarms.alarms.back();
+      last_alrm.pid=p;
+      SmallShell::alarms.alarms.back()=last_alrm;
+    }
     if (!this->background) {
       SmallShell::fg_pid = p;
       waitpid(p, nullptr, WUNTRACED);
@@ -437,22 +446,28 @@ JobsList::JobEntry* JobsList::getLastJob(int* lastJobId) { // used for fg comman
 }
 
 // **********************************AlarmList**********************************
-AlarmList SmallShell::alarms;
 void AlarmList::addAlarm(const char* cmd, int pid, time_t duration) {
     AlarmEntry alarm_entry(time(nullptr), duration, cmd, pid);
     this->alarms.push_back(alarm_entry);
 }
 
 void AlarmList::removeFinishedAlarms() {
-  for (auto alarm = this->alarms.begin(); alarm != this->alarms.end(); ) {
-    if (time(nullptr) - alarm->start_time >= alarm->duration) {
-        kill(alarm->pid, SIGKILL);
-        alarm = this->alarms.erase(alarm);
-    }
-    else {
-        alarm++;
+  int min = -1;
+  int pid = 0;
+  auto remove_index = this->alarms.begin();
+  for (auto alarm = this->alarms.begin(); alarm != this->alarms.end(); alarm++) {
+    time_t passed = time(nullptr) - alarm->start_time; 
+    if ((passed >= alarm->duration && passed-alarm->duration < min) || min == -1) {
+      min = passed-alarm->duration;
+      pid = alarm->pid;
+      remove_index = alarm;
     }
   }
+  if (pid>0) {
+    kill(pid, SIGKILL);
+    std::cout << "smash: timeout "<<(*remove_index).duration << " " << (*remove_index).cmd_line << " timed out!" << std::endl;
+  }
+  this->alarms.erase(remove_index);
 }
 
 //**********************************JobsCommand**********************************
@@ -543,35 +558,36 @@ void KillCommand::execute() {
 }
 
 //**********************************TimeoutCommand**********************************
+TimeoutCommand::TimeoutCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {
+}
 void TimeoutCommand::execute() {
   if (this->words.size() < 3) {
       std::cerr << "smash error: timeout: invalid arguments\n";
-  } else {
+  } 
+  else {
     try {
       int duration = std::stoi(this->words[1]);
       if (std::to_string(duration).size() != this->words[1].size()) {
         throw nullptr;
       }
       std::string cmd = "";
-      for (int i = 2; i < this->words.size(); i++) {
+      for (int i = 2; i < (int)this->words.size(); i++) {
         cmd += this->words[i];
-        if (i != this->words.size() - 1) {
+        if (i != (int)this->words.size() - 1) {
           cmd += " ";
         }
       }
+      if (this->background) {
+        cmd += "&";
+      }
       SmallShell &smash = SmallShell::getInstance();
       alarm(duration);
-      pid_t pid = fork();
-      if (pid == -1) {
-        perror("smash error: fork failed");
-      } else if (pid == 0) {
-        setpgrp();
-        smash.executeCommand(cmd.c_str());
-        exit(0);
-      } else {
-        smash.alarms.addAlarm(cmd.c_str(), pid, duration);
-        waitpid(pid, nullptr, WUNTRACED);
-      }
+      smash.alarms.addAlarm(cmd.c_str(), 0, duration);
+      Command* com = smash.CreateCommand(cmd.c_str());
+      com->timed=true;
+      com->full_cmd = this->full_cmd;
+      com->execute();
+      delete com;      
     }
     catch (...) {
       std::cerr << "smash error: timeout: invalid arguments\n";
@@ -623,6 +639,9 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
   }
   else if (firstWord.compare("kill") == 0 || firstWord.compare("kill&") == 0){
     return new KillCommand(cmd_line);
+  }
+  else if (firstWord.compare("timeout") == 0 || firstWord.compare("timeout&") == 0) {
+    return new TimeoutCommand(cmd_line);
   }
   else {
     return new ExternalCommand(cmd_line);
