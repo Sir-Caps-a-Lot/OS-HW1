@@ -109,17 +109,18 @@ Command::Command(const char* cmd_line) : redirect_failed(false), cmd_argc(0), fu
     }
     if (find_file) {// can still be reach after the first block
       int perm = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-      const char* dest_file = word.substr(cmd_pos).c_str();
+      string temp_dest = word.substr(cmd_pos);
+      const char* dest_file = temp_dest.c_str();
       this->fd = open(dest_file, wtype, perm);
       if (this->fd == -1) {
-        perror("smash error: open: failed");
+        perror("smash error: open failed");
         this->redirect = false;
         this->redirect_failed = true;
       }
       else {
         close(1);
         if (dup2(this->fd, 1)==-1) {
-          perror("smash error: dup2: failed");
+          perror("smash error: dup2 failed");
           close(this->fd);
           dup2(this->std_fd, 1);
           this->redirect = false;
@@ -140,6 +141,7 @@ Command::Command(const char* cmd_line) : redirect_failed(false), cmd_argc(0), fu
     if (this->background) {
       if (last.compare("&")==0) {
         this->words.pop_back();
+        this->cmd_argc--;
       }
       else {
         this->words[this->words.size() - 1] = last.substr(0, last.size()-1); // remove it from command
@@ -176,14 +178,14 @@ void ChangeDirCommand::execute() {
       std::cerr << "smash error: cd: OLDPWD not set\n";
     }
     else if (chdir(*(this->last)) == -1)
-      perror("smash error: chdir: failed");
+      perror("smash error: chdir failed");
     else {
       delete *(this->last);
       *(this->last) = current;
     }
   }
   else if (chdir(this->dest.c_str()) == -1)
-    perror("smash error: chdir: failed");
+    perror("smash error: chdir failed");
   else {
     delete *(this->last);
     *(this->last) = current;
@@ -215,7 +217,7 @@ void ChmodCommand::execute() {
     std::cerr << "smash error: chmod: invalid arguments\n";
   }
   else if (chmod(this->dest_file, this->perm) == -1) {
-    perror("smash error: chmod: failed");
+    perror("smash error: chmod failed");
   }
 }
 
@@ -244,7 +246,7 @@ void ShowPidCommand::execute() {
   }
   int p=getpid();
   if (p==-1) {
-    perror("smash error: getpid: failed");
+    perror("smash error: getpid failed");
   }
   else {
     std::cout << "smash pid is " << getpid() << "\n";
@@ -258,7 +260,7 @@ void GetCurrDirCommand::execute() {
   }
   const char* cwd = getcwd(NULL, 0);
   if (cwd == NULL) {
-    perror("smash error: getcwd: failed");
+    perror("smash error: getcwd failed");
   }
   else {
     std::cout << cwd << "\n";
@@ -321,12 +323,12 @@ void ExternalCommand::execute() {
   }
   int p=fork();
   if (p == -1) { // failed
-    perror("smash error: fork: failed");
+    perror("smash error: fork failed");
   }
   else if (p==0) { // child
     setpgrp();
     execvp(this->command.c_str(), this->argv);
-    perror("smash error: execvp: failed");
+    perror("smash error: execvp failed");
     exit(1);
   }
   else { // parent
@@ -387,7 +389,7 @@ void JobsList::killAllJobs() { // this is for the "quit kill" command, not "kill
   std::cout << "smash: sending SIGKILL signal to " << this->jobs_list.size() <<" jobs:\n";
   for (auto job : this->jobs_list) {
     if (kill(job.job_pid, SIGKILL) == 1) {
-      perror("smash error: kill failed");
+      perror("smash error kill failed");
     }
     else {
       std::cout << job.job_pid << ": " << job.cmd_line << endl;
@@ -490,12 +492,12 @@ void ForegroundCommand::execute() {
       std::cerr << "smash error: fg: jobs list is empty\n";
     }
     else {
-      SmallShell::jobs.removeJobById(jid);
       std::cout << job->cmd_line << " " << job->job_pid << std::endl;
+      SmallShell::fg_pid = job->job_pid;
+      SmallShell::jobs.removeJobById(jid);
+      waitpid(SmallShell::fg_pid, nullptr, WUNTRACED);
+      SmallShell::fg_pid = 0;
     }
-  }
-  else if (this->words.size() > 2) { // too much parameters
-    std::cerr << "smash error: fg: invalid arguments\n";
   }
   else {
     try {
@@ -506,6 +508,9 @@ void ForegroundCommand::execute() {
       auto job = SmallShell::jobs.getJobById(jid);
       if (job == nullptr) { // does not exist
         std::cerr << "smash error: fg: job-id " << jid <<" does not exist\n";
+      }
+      else if (this->words.size() > 2) { // too much parameters
+        throw nullptr;
       }
       else {
         std::cout << job->cmd_line << " " << job->job_pid << std::endl;
@@ -526,35 +531,39 @@ void KillCommand::execute() {
   if (this->redirect_failed) {
     return;
   }
-  if (this->words.size() != 3) {
-    std::cerr << "smash error: kill: invalid arguments\n";
-  }
-  else {
-    try {
-      if (this->words[1][0] != '-') {
+  try {
+      if (this->words.size() < 3) {
         throw nullptr;
       }
-      int signal = std::stoi(this->words[1].substr(1));
       int jid = std::stoi(this->words[2]);
-      if (std::to_string(jid).size() != this->words[2].size() || 
-          std::to_string(signal).size() != this->words[1].size() - 1) {
-        throw nullptr;
-      }
       auto job = SmallShell::jobs.getJobById(jid);
       if (job == nullptr) {
         std::cerr << "smash error: kill: job-id " << jid <<" does not exist\n";
       }
-      else if (kill(job->job_pid, signal)==1) {
-        perror("smash error: kill failed");
-      }
       else {
-        std::cout << "signal number " << signal << " was sent to pid " << job->job_pid << std::endl;
+        int signal = std::stoi(this->words[1].substr(1));
+        if (std::to_string(jid).size() != this->words[2].size() || 
+            std::to_string(signal).size() != this->words[1].size() - 1) {
+          throw nullptr;
+        }
+        if (this->words.size() != 3) {
+          throw nullptr;
+        }
+        if (this->words[1][0] != '-') {
+          throw nullptr;
+        }
+        else if (kill(job->job_pid, signal)==-1) {
+          perror("smash error: kill failed");
+        }
+        else {
+          std::cout << "signal number " << signal << " was sent to pid " << job->job_pid << std::endl;
+        }
       }
     }
     catch(...) {
       std::cerr << "smash error: kill: invalid arguments\n";
     }
-  }
+  
 }
 
 //**********************************TimeoutCommand**********************************
